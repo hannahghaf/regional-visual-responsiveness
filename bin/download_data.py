@@ -9,7 +9,7 @@ data_out = project_root / "data"
 cache = EcephysProjectCache.from_warehouse(manifest=os.path.join(data_out, "manifest.json"))
 sessions = cache.get_session_table().index[:5]
 print(data_out)
-'''
+
 for sid in sessions:
     sess = cache.get_session_data(sid)
     path = os.path.join(data_out, f"session_{sid}")
@@ -18,4 +18,5 @@ for sid in sessions:
         {"unit": u, "t": t} for u, ts in sess.spike_times.items() for t in ts
     ]).to_csv(f"{path}/spike_times.csv", index=False)
     sess.channels.to_csv(f"{path}/channels.csv", index=False)
-    '''
+
+print("done")
