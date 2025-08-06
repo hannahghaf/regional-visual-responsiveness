@@ -5,8 +5,6 @@ from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProj
 
 project_root = Path(__file__).resolve().parent.parent
 data_out = project_root / "data"
-print(data_out)
-print('---------------------')
 
 cache = EcephysProjectCache.from_warehouse(manifest=os.path.join(data_out, "manifest.json"))
 sessions = cache.get_session_table().index[:5]
