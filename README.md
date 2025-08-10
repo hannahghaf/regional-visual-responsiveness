@@ -1,0 +1,4 @@
+params:
+sessions
+outdir
+datadir
