@@ -1,7 +1,19 @@
 import os
+import sys
 from pathlib import Path
 import pandas as pd
+import csv
 from allensdk.brain_observatory.ecephys.ecephys_project_cache import EcephysProjectCache
+
+# check CLI args
+if len(sys.argv) != 4:
+    print("Usage: python download_data.py <session_id> <manifest_path> <output_dir>")
+    sys.exit(1)
+
+session_id = int(sys.argv[1])
+manifest_path = Path(sys.argv[2])
+data_out = Path(sys.argv[3])
+
 
 def process_session_csvs(session_id, cache, data_out):
     '''
@@ -17,18 +29,19 @@ def process_session_csvs(session_id, cache, data_out):
     sess_path.mkdir(parents=True, exist_ok=True)
 
     # save spike times
-    spikes = pd.DataFrame([
-        {"unit": unit_id, "t": t}
-        for unit_id, spike_times in sess.spike_times.items()
-        for t in spike_times
-    ])
-    spikes.to_csv(f"{sess_path}/spike_times.csv", index=False)
+    spike_csv = Path(data_out) / "spike_times.csv"
+    with open(spike_csv, 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(["unit", "t"])
+        for unit_id, times in sess.spike_times.items():
+            for t in times:
+                w.writerow([unit_id, float(t)])
 
-    # save channels
+    # save channels & stimulus presentation data
     sess.channels.to_csv(sess_path / "channels.csv", index=False)
-    ################################################ delete these csvs once have pkl? ######### if dont use 
+    sess.stimulus_presentations.to_csv(sess_path / "stimulus_presentations.csv", index=False)
 
-    return spikes
+    return spike_csv
 
 
 def load_or_process(session_id, cache, data_out):
@@ -46,7 +59,6 @@ def load_or_process(session_id, cache, data_out):
     else:
         print(f"[INFO] No pickle found. Processing raw data for session {session_id}...")
         df = process_session_csvs(session_id, cache, data_out)
-
         pickle_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_pickle(pickle_path)
         print(f"[INFO] Saved processed DataFrame to {pickle_path}")
@@ -54,16 +66,7 @@ def load_or_process(session_id, cache, data_out):
 
 
 # initialize cache and run
-
-project_root = Path(__file__).resolve().parent.parent
-data_out = project_root / "data"
-
-cache = EcephysProjectCache.from_warehouse(manifest=os.path.join(data_out, "manifest.json"))
-
-sessions = cache.get_session_table().index[:5]
-
-for sid in sessions:
-    df = load_or_process(sid, cache, data_out)
-    print(df.head())
-
+cache = EcephysProjectCache.from_warehouse(manifest=manifest_path)
+df = load_or_process(session_id, cache, data_out)
+print(df.head())
 print("done")
