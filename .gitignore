@@ -1,2 +1,6 @@
 ecephys_cache_dir/
 data/
+.nextflow/
+.nextflow.*
+work/
+results/
