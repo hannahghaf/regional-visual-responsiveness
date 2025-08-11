@@ -13,8 +13,8 @@ workflow download_data {
 
 process download_session_data {
     cpus { 2 + 1*(task.attempt - 1) }
-    memory { 8.GB + 1.GB*(task.attempt - 1) }
-    maxRetries 2
+    memory { 6.GB + 1.GB*(task.attempt - 1) }
+    maxRetries 4
     errorStrategy 'retry'
 
     container 'visresp:latest'
@@ -29,6 +29,8 @@ process download_session_data {
     script:
     """
     mkdir -p session_${session_id}
-    python ${projectDir}/bin/download_data.py ${session_id} ${manifest_path} session_${session_id}
+    # python ${projectDir}/bin/download_data.py ${session_id} ${manifest_path} session_${session_id}
+    #python /app/bin/download_data.py ${session_id} /app/data/manifest.json session_${session_id}
+    python /app/bin/download_data.py ${session_id} /app/data/manifest.json /app/data
     """
 }
