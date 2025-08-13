@@ -1,0 +1,40 @@
+Session: 715093703
+                       mean       min      max
+stimulus_name                                 
+drifting_gratings  2.001647  1.984950  2.00176
+natural_scenes     0.250212  0.250191  0.26690
+
+===============
+
+Session: 719161530
+                       mean       min       max
+stimulus_name                                  
+drifting_gratings  2.001673  2.001610  2.001730
+natural_scenes     0.250212  0.250191  0.266889
+
+===============
+
+Session: 721123822
+                       mean       min       max
+stimulus_name                                  
+drifting_gratings  2.001672  2.001550  2.001770
+natural_scenes     0.250215  0.250188  0.283578
+
+===============
+
+Session: 732592105
+                       mean      min       max
+stimulus_name                                 
+drifting_gratings  2.001780  1.98495  2.018360
+natural_scenes     0.250212  0.25019  0.266877
+
+===============
+
+Session: 737581020
+                       mean       min       max
+stimulus_name                                  
+drifting_gratings  2.001699  2.001600  2.018360
+natural_scenes     0.250209  0.233527  0.266888
+
+===============
+
