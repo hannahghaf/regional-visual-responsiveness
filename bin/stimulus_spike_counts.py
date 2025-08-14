@@ -33,6 +33,8 @@ stim = pd.read_csv(
     usecols=["start_time","stop_time","stimulus_name"],
     low_memory=False)
 
+#series = channels["ecephys_structure_acronym"].unique()
+
 # filter for only specific stimulus types (project looking at drifting_gratings & natural_scenes)
 stim = stim[stim["stimulus_name"].isin(["drifting_gratings", "natural_scenes"])].reset_index(drop=True)
 
@@ -63,39 +65,37 @@ stim = stim.reset_index(drop=True)
 stim["duration"] = stim["stop_time"] - stim["start_time"]
 
 # -------- Define evoked (W) and baseline (B) windows --------
+BASELINE_SEC = 0.5  # 500 ms baseline window
+EVOKED_SEC = 0.25   # 250 ms post-onset for transient response
+# evoked_sec picked smaller than shortest stimulus
+
 w_start = stim["start_time"].to_numpy()     # evoked start
-w_end = stim["stop_time"].to_numpy()        # evoked end
+w_end = w_start + EVOKED_SEC                # evoked end
 
 # B = Baseline window
 ## activity just before stimulus starts ("control period" neuron at rest)
+b_end = w_start
+b_start_exact = b_end - BASELINE_SEC
+
 min_spike_t = float(channel_unit_t_struct["spike_timestamp"].min())
-b_start_clipped = np.maximum(
-    (stim["start_time"] - stim["duration"]).to_numpy(), 
-    min_spike_t
-)
-b_end = stim["start_time"].to_numpy()
+prev_w_end = np.r_[-np.inf, (w_start + EVOKED_SEC)[:-1]] # previous trial's evoked end
+# forces baseline start to be no earlier than prev stimulus end; prevent overlapping
 
-# prevent baseline from overlapping the previous trial's ekoved
-prev_w_end = np.r_[-np.inf, w_end[:-1]]  # previous trial's evoked end, aligned to current trial
-b_start_nolap = np.maximum(b_start_clipped, prev_w_end) # forces baseline start to be no earlier than prev stimulus end
+b_start = np.maximum(b_start_exact, np.maximum(min_spike_t, prev_w_end))
 
-# optional: see the adjusted baselines
-'''
-B = pd.DataFrame({"trial": stim.index, "start": b_start_clipped, "end": b_end})
-W = pd.DataFrame({"trial": stim.index, "start": w_start,         "end": w_end})
-print(B.head(), W.head())
-'''
+# see the adjusted baselines
+#B = pd.DataFrame({"trial": stim.index, "stim": stim["stimulus_name"], "start": b_start, "end": b_end})
+#W = pd.DataFrame({"trial": stim.index, "stim": stim["stimulus_name"], "start": w_start, "end": w_end})
 
 # B/W windows: 2 rows per trial (baseline, evoked)
 ## e.g.  drifting_gratings   baseline    8.0     10.0
 ##       drifting_gratings   evoked      10.0    12.0
-n = len(stim)
 windows = pd.DataFrame({
     "trial": np.repeat(stim.index.values, 2),
     "stimulus_name": np.repeat(stim["stimulus_name"].values, 2),
-    "phase": np.tile(["baseline", "evoked"], n),
-    "start": np.concatenate([b_start_nolap, w_start]),
-    "end":   np.concatenate([b_end, w_end]),
+    "phase": np.tile(["baseline", "evoked"], len(stim)),
+    "start": np.concatenate([b_start,   w_start]),
+    "end":   np.concatenate([b_end,     w_end]),
 })
 windows["duration"] = windows["end"] - windows["start"]
 # drop any zero/negative-duration windows
@@ -157,18 +157,14 @@ pivot["count_evoked"] = pivot["count_evoked"].fillna(0)
 pivot["delta_count"] = pivot["count_evoked"] - pivot["count_baseline"]
 pivot["delta_rate_hz"] = pivot["rate_hz_evoked"] - pivot["rate_hz_baseline"]
 
-print("==================")
-print(pivot.head())
-print(pivot.columns)
-print("pivot head --------------------------------------------")
-
 # save analysis table
-analysis_out = sesh_path / f"s{session_id}_trial_unit_rates_by_region.csv"
-pivot.to_csv(analysis_out, index=False)
+analysis_out = sesh_path / f"s{session_id}_pivot_counts_rates_by_region.csv"
+pivot.to_csv(analysis_out, index=False) 
 print(f"Saved analysis table to: {analysis_out}")
 
 # quick sanity check
 print(pivot.head(5))
+print("Printing top 10 region/stimulus pairs for mean delta_rate_hz...")
 print(
     pivot.groupby(["ecephys_structure_acronym","stimulus_name"])["delta_rate_hz"]
          .mean()
