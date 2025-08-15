@@ -35,8 +35,39 @@ stim = pd.read_csv(
 
 #series = channels["ecephys_structure_acronym"].unique()
 
-# filter for only specific stimulus types (project looking at drifting_gratings & natural_scenes)
-stim = stim[stim["stimulus_name"].isin(["drifting_gratings", "natural_scenes"])].reset_index(drop=True)
+# -------- Keep only cortex visual-proessing areas --------
+VIS_AREAS = {
+    "VISrl", "VIS", "VISp", "VISpm", "VISam", "VISal",
+    "VISl", "VISmma", "VISmmp", "VISli", "POL"
+}
+
+# filder channels to desired regions
+channels = channels[channels["ecephys_structure_acronym"].isin(VIS_AREAS)].copy()
+# keep only units that sit on those channels
+keep_chan_ids = set(channels["id"].tolist())
+units = units[units["ecephys_channel_id"].isin(keep_chan_ids)].copy()
+# keep only spikes from those units (save time)
+keep_unit_ids = set(units["id"].tolist())
+spikes = spikes[spikes["unit"].isin(keep_unit_ids)].copy()
+
+print(f"Filtering VIS_AREAS: Kept {len(channels)} channels, {len(units)} units, {len(spikes)} spikes in visual areas.")
+
+# -------- Filter stimuli for this project's analysis --------
+## filter for only specific stimulus types (project looking at drifting_gratings vs. natural_movies)
+''''
+stim["stimulus_name"] = stim["stimulus_name"].replace({
+    "natural_movie_one": "natural_movies",
+    "natural_movie_three": "natural_movies"
+})
+stim = stim[stim["stimulus_name"].isin(["drifting_gratings", "natural_movies"])].reset_index(drop=True)
+'''
+
+#################### ####################
+print("#################### ####################")
+print("\nCounts per stimulus BEFORE window building:")
+print(stim["stimulus_name"].value_counts(dropna=False).rename_axis("stimulus").to_frame("n"))
+print("#################### ####################")
+#################### ####################
 
 # -------- Merge spike times w unit and channel metadata --------
 channels_with_rate = (
@@ -65,12 +96,13 @@ stim = stim.reset_index(drop=True)
 stim["duration"] = stim["stop_time"] - stim["start_time"]
 
 # -------- Define evoked (W) and baseline (B) windows --------
-BASELINE_SEC = 0.5  # 500 ms baseline window
+BASELINE_SEC = 0.25 # 500 ms baseline window
 EVOKED_SEC = 0.25   # 250 ms post-onset for transient response
-# evoked_sec picked smaller than shortest stimulus
+# evoked_sec picked smaller than shortest stimulus ######################################
 
-w_start = stim["start_time"].to_numpy()     # evoked start
-w_end = w_start + EVOKED_SEC                # evoked end
+w_start = stim["start_time"].to_numpy()             # evoked start
+stim_end = stim["stop_time"].to_numpy()
+w_end = np.minimum(w_start + EVOKED_SEC, stim_end)  # evoked end
 
 # B = Baseline window
 ## activity just before stimulus starts ("control period" neuron at rest)
@@ -78,10 +110,69 @@ b_end = w_start
 b_start_exact = b_end - BASELINE_SEC
 
 min_spike_t = float(channel_unit_t_struct["spike_timestamp"].min())
-prev_w_end = np.r_[-np.inf, (w_start + EVOKED_SEC)[:-1]] # previous trial's evoked end
+prev_w_end = np.r_[-np.inf, w_end[:-1]] # previous trial's evoked end
 # forces baseline start to be no earlier than prev stimulus end; prevent overlapping
-
 b_start = np.maximum(b_start_exact, np.maximum(min_spike_t, prev_w_end))
+'''
+# ---- Drop truncated trials (where B or W < intended length) ----
+# keep a copy before filtering
+stim_raw = stim.copy()
+#############################
+
+b_dur = b_end - b_start
+w_dur = w_end = w_start
+eps = 1e-9  # float tolerance
+
+keep = (b_dur >= BASELINE_SEC - eps) & (w_dur >= EVOKED_SEC - eps)
+
+total = len(stim)
+kept  = int(keep.sum())
+dropped = total - kept
+print(f"Trials total: {total} | kept: {kept} ({kept/total:.1%}) | dropped (truncated): {dropped} ({dropped/total:.1%})")
+
+# Filter stim and arrays to *kept* trials
+w_start = w_start[keep]; w_end = w_end[keep]
+b_start = b_start[keep]; b_end = b_end[keep]
+stim = stim.loc[keep].reset_index(drop=True)
+
+#################### ####################
+print("#################### ####################")
+print("\nCounts per stimulus AFTER dropping truncated windows:")
+print(stim["stimulus_name"].value_counts(dropna=False).rename_axis("stimulus").to_frame("n"))
+#################### ####################
+#################### ####################
+# kept/dropped report by stimulus (using the original stim index alignment)
+
+# ... later, when you have 'keep' boolean for the same rows in stim_raw ...
+drop_report = (
+    pd.DataFrame({"stimulus_name": stim_raw["stimulus_name"], "keep": keep})
+      .groupby(["stimulus_name","keep"])
+      .size()
+      .unstack(fill_value=0)
+      .rename(columns={False:"dropped", True:"kept"})
+)
+print("\nKept vs Dropped by stimulus:")
+print(drop_report)
+print("#################### ####################")
+#################### ####################
+'''
+############################
+'''
+dropped_mask = ~keep
+print(f"Kept {keep.sum()} / {len(keep)} trials "
+      f"({keep.mean():.1%}); Dropped {dropped_mask.sum()} ({dropped_mask.mean():.1%}).")
+
+# Where did drops come from? (by stimulus type)
+stim_drop_report = (
+    stim_raw.assign(keep=keep)
+            .groupby(["stimulus_name","keep"])
+            .size()
+            .unstack(fill_value=0)
+            .rename(columns={False:"dropped", True:"kept"})
+)
+print("\nDrop report by stimulus:")
+print(stim_drop_report)
+'''
 
 # see the adjusted baselines
 #B = pd.DataFrame({"trial": stim.index, "stim": stim["stimulus_name"], "start": b_start, "end": b_end})
@@ -100,6 +191,122 @@ windows = pd.DataFrame({
 windows["duration"] = windows["end"] - windows["start"]
 # drop any zero/negative-duration windows
 windows = windows[windows["duration"] > 0].reset_index(drop=True)
+
+# $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+# $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+# ---------- Stimulus timeline (condensed, with explicit NM1/NM3) ----------
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+# exactly the three you want, plotted separately
+PLOT_NAMES = ["drifting_gratings", "natural_movie_one", "natural_movie_three"]
+GAP_THR = 1.0  # merge frames within 1s into a single block; bump if still "toothpicks"
+
+st = stim[stim["stimulus_name"].isin(PLOT_NAMES)].copy()
+st = st.sort_values(["stimulus_name", "start_time"]).reset_index(drop=True)
+
+# Condense adjacent rows of the same stimulus if the gap is small
+rows = []
+for name, g in st.groupby("stimulus_name"):
+    g = g.sort_values("start_time").reset_index(drop=True)
+    cur_start = cur_end = None
+    for _, r in g.iterrows():
+        s, e = float(r["start_time"]), float(r["stop_time"])
+        if cur_start is None:
+            cur_start, cur_end = s, e
+        else:
+            gap = s - cur_end
+            if gap <= GAP_THR:
+                cur_end = max(cur_end, e)
+            else:
+                rows.append((name, cur_start, cur_end))
+                cur_start, cur_end = s, e
+    if cur_start is not None:
+        rows.append((name, cur_start, cur_end))
+
+condensed = pd.DataFrame(rows, columns=["stimulus_name", "start", "end"])
+condensed["duration"] = condensed["end"] - condensed["start"]
+
+# Figure out which of the requested names actually have segments
+present_names = condensed["stimulus_name"].unique().tolist() if not condensed.empty else []
+missing_names = [n for n in PLOT_NAMES if n not in present_names]
+if missing_names:
+    print(f"(timeline) No segments for: {missing_names}")
+
+# Build lane positions dynamically to avoid KeyError
+ordered_names = [n for n in PLOT_NAMES if n in present_names]
+if not ordered_names:
+    print("(timeline) Nothing to plot after condensing.")
+else:
+    y0, step, h = 10, 12, 8
+    lane_y = {name: y0 + i * step for i, name in enumerate(ordered_names)}
+
+    # simple color map; auto-pick if not specified
+    base_colors = {
+        "drifting_gratings": "tab:orange",
+        "natural_movie_one": "tab:blue",
+        "natural_movie_three": "tab:green",
+    }
+
+    fig, ax = plt.subplots(figsize=(12, 3.5))
+    for name in ordered_names:
+        segs = condensed[condensed["stimulus_name"] == name]
+        spans = [(float(s), float(d)) for s, d in zip(segs["start"], segs["duration"])]
+        if spans:
+            ax.broken_barh(spans, (lane_y[name], h), facecolors=base_colors.get(name, None))
+
+    ax.set_xlabel("Time (s)")
+    ax.set_yticks([lane_y[n] + h/2 for n in ordered_names])
+    ax.set_yticklabels(ordered_names)
+    ax.set_title(f"Stimulus timeline (condensed) — session {session_id}")
+    ax.grid(True, axis="x", linestyle=":", linewidth=0.6)
+
+    plot_outdir = sesh_path / f"session_{session_id}_plots"
+    plot_outdir.mkdir(parents=True, exist_ok=True)
+    tl_path = plot_outdir / f"s{session_id}_stim_timeline.png"
+    plt.tight_layout()
+    plt.savefig(tl_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved condensed stimulus timeline to: {tl_path}")
+print("# $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+# $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+# $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+
+
+
+# ===================================================================
+# ---- DEBUG & SANITY CHECKS delta_rate_hz ----
+
+## do W exactly follow B for each trial?
+wb = windows.pivot_table(index="trial", columns="phase", values=["start","end"], aggfunc="first")
+wb.columns = [f"{a}_{b}" for a,b in wb.columns.to_flat_index()]
+print("\nWindow sanity (first 10):")
+print(wb.head(10))
+
+## should be: end_baseline == start_evoked (or close)
+mismatch = np.any(np.abs(wb["end_baseline"].to_numpy() - wb["start_evoked"].to_numpy()) > 1e-9)
+print("Baseline end != Evoked start for any trial?:", mismatch)
+
+## durations
+print("\nDuration summary (sec):")
+print(windows.groupby("phase")["duration"].describe())
+
+## overlaps (no two windows should overlap)
+w_sorted = windows.sort_values("start").reset_index(drop=True)
+any_overlap = (w_sorted["start"].iloc[1:].to_numpy() < w_sorted["end"].iloc[:-1].to_numpy()).any()
+print("Any overlaps among windows?:", any_overlap)
+
+## is evoked shorter than the actual stimulus anywhere?
+min_stim_len = (stim["stop_time"] - stim["start_time"]).min()
+print("Shortest stimulus duration (sec):", float(min_stim_len))
+print("Your EVOKED_SEC:", float(EVOKED_SEC))
+print('-----------------------------------------------------------------')
+print("Duration summary (sec) after fix:")
+print(windows.groupby("phase")["duration"].describe())
+# ===================================================================
 
 # -------- Map spikes to windows with IntervalIndex --------
 intervals = pd.IntervalIndex.from_arrays(
@@ -161,16 +368,6 @@ pivot["delta_rate_hz"] = pivot["rate_hz_evoked"] - pivot["rate_hz_baseline"]
 analysis_out = sesh_path / f"s{session_id}_pivot_counts_rates_by_region.csv"
 pivot.to_csv(analysis_out, index=False) 
 print(f"Saved analysis table to: {analysis_out}")
-
-# quick sanity check
-print(pivot.head(5))
-print("Printing top 10 region/stimulus pairs for mean delta_rate_hz...")
-print(
-    pivot.groupby(["ecephys_structure_acronym","stimulus_name"])["delta_rate_hz"]
-         .mean()
-         .sort_values(ascending=False)
-         .head(10)
-)
 
 # ==========================================================================================
 # -------- Plot of distribution --------
@@ -250,14 +447,35 @@ print("Distribution plotting complete.")
 # ==========================================================================================
 
 # -------- small text summary --------
+# -------- Stimulus-aware trial-weighted summary (top 5 per stimulus) --------
 region_summary = (
-    pivot.groupby("ecephys_structure_acronym")
+    pivot.groupby([ "ecephys_structure_acronym", "stimulus_name"])
     .agg(mean_delta=("delta_rate_hz", "mean"),
          median_delta=("delta_rate_hz", "median"),
          n=("delta_rate_hz", "size"))
-    .sort_values("mean_delta", ascending=False)
+    .reset_index()
+    .sort_values(by=["stimulus_name", "mean_delta"], ascending=[True,False])
 )
-print("\nTop regions by mean delta rate (Hz):")
-print(region_summary.head(10))
+top5_per_stim = region_summary.groupby("stimulus_name", group_keys=False).head(5)
+print("\nTop regions per stimuli by mean delta rate (Hz):")
+print(top5_per_stim)
+#------------------------
+# -------- Unit-weighted summary (one vote per neuron per stimulus) --------
+per_unit = (
+    pivot.groupby(["unit_id","ecephys_structure_acronym","stimulus_name"], as_index=False)
+         .agg(delta_rate_hz_mean=("delta_rate_hz","mean"),
+              n_trials=("delta_rate_hz","size"))
+)
+region_stim_unitweighted = (
+    per_unit.groupby(["ecephys_structure_acronym","stimulus_name"])
+            .agg(n_units=("delta_rate_hz_mean","size"),
+                 mean_delta=("delta_rate_hz_mean","mean"),
+                 median_delta=("delta_rate_hz_mean","median"),
+                 frac_pos=("delta_rate_hz_mean", lambda x: (x > 0).mean()))
+            .reset_index()
+            .sort_values(by=["stimulus_name","mean_delta"], ascending=[True,False])
+)
+print("\nUnit-weighted Region x Stimulus summary:")
+print(region_stim_unitweighted.head(20))
 
 print("done")
