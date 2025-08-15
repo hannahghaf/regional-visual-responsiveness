@@ -17,10 +17,10 @@ BASELINE_SEC  = 0.50     # block-level baseline length (s)
 EPS           = 1e-6
 
 # Use the RAW stimulus table to avoid side-effects from earlier filters/renames
-stim_all = pd.read_csv(sesh_path / "stimulus_presentations.csv", low_memory=False)
+stim_df = pd.read_csv(sesh_path / "stimulus_presentations.csv", low_memory=False)
 
 # Keep only columns we need and sort by time once
-stim_all = stim_all[["stimulus_name","start_time","stop_time"]].sort_values("start_time").reset_index(drop=True)
+stim_all = stim_df[["stimulus_name","start_time","stop_time"]].sort_values("start_time").reset_index(drop=True)
 
 # Helper: for a given time t, find last stop_time before t (to clip the baseline)
 prev_stop_all = stim_all["stop_time"].to_numpy()
@@ -117,3 +117,65 @@ print("\n[movie-trials] head:")
 print(movie_trials.tail(25))
 print(len(movie_trials))
 movie_trials.to_csv(sesh_path / "movie_trials.csv")
+
+
+# =======================================================================================
+
+def find_stimulus_gaps(stim_df):
+    """
+    stim_df: full stimulus_presentations.csv as DataFrame
+    - must have 'start_time' and 'stop_time' in seconds
+    
+    returns a DataFrame of all gaps between any two stimuli,
+    with the gap start/end/duration, sorted by gap duration
+    """
+    # sort by start time
+    stim_df = stim_df.sort_values("start_time").reset_index(drop=True)
+    
+    # get all stop times and next start times
+    stops = stim_df["stop_time"].values
+    starts = stim_df["start_time"].values[1:]  # next stimulus start
+    
+    # gap start is prev stimulus stop, gap end is next stimulus start
+    gap_starts = stops[:-1]
+    gap_ends = starts
+    gap_durations = gap_ends - gap_starts
+    
+    gaps_df = pd.DataFrame({
+        "gap_start": gap_starts,
+        "gap_end": gap_ends,
+        "gap_duration": gap_durations
+    })
+    
+    # only keep positive gaps (drop overlaps or zero)
+    gaps_df = gaps_df[gaps_df["gap_duration"] > 0].reset_index(drop=True)
+    
+    return gaps_df.sort_values("gap_duration", ascending=False)
+
+
+gaps_df = find_stimulus_gaps(stim_df)
+
+print(f"Found {len(gaps_df)} gaps")
+print(gaps_df.head(20))  # top 20 biggest gaps
+
+print(gaps_df)
+
+# ==============================================
+# determine gaps between drifting_gratings frames
+
+dg = stim_df[stim_df["stimulus_name"] == "drifting_gratings"].sort_values("start_time")
+
+# calculate gap from previous drifting grating
+dg["gap_from_prev_dg"] = dg["start_time"] - dg["stop_time"].shift(1)
+
+# calculate gap from any previous stimulus
+dg_sorted = stim_df.sort_values("start_time")
+prev_stop_any = []
+for start in dg["start_time"]:
+    prev_stops = dg_sorted[dg_sorted["stop_time"] <= start]["stop_time"]
+    prev_stop_any.append(prev_stops.max() if not prev_stops.empty else None)
+
+dg["gap_from_prev_any"] = dg["start_time"] - prev_stop_any
+dg_gaps = dg[["start_time", "stop_time", "gap_from_prev_dg", "gap_from_prev_any"]]
+
+print(dg_gaps)
