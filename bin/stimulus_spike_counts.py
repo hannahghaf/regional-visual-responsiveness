@@ -7,6 +7,9 @@ import matplotlib
 matplotlib.use("Agg") # headless mode
 import matplotlib.pyplot as plt
 
+# =======================================================================================
+#          SETUP & LOAD
+# =======================================================================================
 
 # -------- Get session_id from first arg --------
 if len(sys.argv) != 2:
@@ -62,12 +65,9 @@ spikes = spikes[spikes["unit"].isin(keep_unit_ids)].copy()
 print(f"Filtering VIS_AREAS: Kept {len(channels)} channels, {len(units)} units, {len(spikes)} spikes in visual areas.")
 
 
-# -------- Filter stimuli for this project's analysis --------
-
-print("#################### ####################")
-print("\nCounts per stimulus BEFORE window building:")
+# -------- Stimulus counts check --------
+print("\nCounts per stimulus before window building:")
 print(stim["stimulus_name"].value_counts(dropna=False).rename_axis("stimulus").to_frame("n"))
-print("#################### ####################")
 
 
 # -------- Merge spike times w unit and channel metadata --------
@@ -94,6 +94,10 @@ missing = needed - set(stim.columns)
 if missing:
     raise ValueError(f"stimulus_presentations.csv missing required columns: {missing}")
 
+
+# =======================================================================================
+#          BUILD WINDOWS
+# =======================================================================================
 
 # -------- Window policy implementation (0.5s for both) --------
 B_SEC = 0.50    # baseline length for both drifting_gratings and natural_movies
@@ -308,6 +312,10 @@ any_overlap = (w_sorted["start"].iloc[1:].to_numpy() < w_sorted["end"].iloc[:-1]
 print("Any overlaps among windows?:", any_overlap)
 
 
+# =======================================================================================
+#          MAP SPIKES
+# =======================================================================================
+
 # -------- Map spikes to windows with IntervalIndex --------
 intervals = pd.IntervalIndex.from_arrays(
     windows["start"].to_numpy(),
@@ -373,7 +381,10 @@ pivot.to_csv(analysis_out, index=False)
 print(f"Saved analysis table to: {analysis_out}")
 
 
-# ==========================================================================================
+# =======================================================================================
+#          REPORTS & PLOTS
+# =======================================================================================
+
 # -------- Plot of distribution --------
 plot_outdir = sesh_path / f"session_{session_id}_plots"
 
@@ -438,7 +449,7 @@ out_path2 = plot_outdir / f"s{session_id}_baseline_vs_evoked_by_region.png"
 plt.savefig(out_path2, dpi=160, bbox_inches="tight")
 plt.close(fig)
 print(f"Saved plot: {out_path2}")
-# ==========================================================================================
+# =================================================================
 
 # -------- small text summary --------
 # --- Stimulus-aware trial-weighted summary (top 5 per stimulus) ---
@@ -478,7 +489,7 @@ print("done")
 
 
 '''
-# --- old B/W builder for reference ---
+# ==== old B/W builder for reference ====
 
 stim = stim.reset_index(drop=True)
 stim["duration"] = stim["stop_time"] - stim["start_time"]
