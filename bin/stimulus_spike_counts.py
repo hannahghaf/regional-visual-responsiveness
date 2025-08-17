@@ -6,6 +6,7 @@ import math
 import matplotlib
 matplotlib.use("Agg") # headless mode
 import matplotlib.pyplot as plt
+import re
 
 # =======================================================================================
 #          SETUP & LOAD
@@ -385,74 +386,188 @@ print(f"Saved analysis table to: {analysis_out}")
 #          REPORTS & PLOTS
 # =======================================================================================
 
+# helper
+def _safe(s: str) -> str: #######################################UNUSED
+    # make strings safe for filenames
+    return re.sub(r'[^A-Za-z0-9_.-]+', '_', str(s))
+
+print(pivot.columns)
+
 # -------- Plot of distribution --------
 plot_outdir = sesh_path / f"session_{session_id}_plots"
+plot_outdir.mkdir(parents=True, exist_ok=True)
 
+# pick "top" regions by how many unit-trials they contain
 region_counts = pivot["ecephys_structure_acronym"].value_counts()
-regions = region_counts.head(8).index.tolist()  # tweak how many you want
-print(regions)
-print("??????????????????????????????")
+regions = region_counts.head(8).index.tolist()
+if not regions:
+    print("[plots] No regions available to plot.")
+else:
+    print("[plots] Regions selected:", regions)
 
-# -- A) delta-rate histograms per region --
+stim_order = ["drifting_gratings", "natural_movie_one", "natural_movie_three"]
+present_stims = [s for s in stim_order if s in pivot["stimulus_name"].unique()]
+if not present_stims:
+    print("[plots] No known stimuli present among", stim_order)
+
+# color map for the three stimuli
+stim_color = {
+    "drifting_gratings": "tab:orange",
+    "natural_movie_one": "tab:blue",
+    "natural_movie_three": "tab:green"
+}
+
+# -- A) delta-rate histograms by stimulus per region --
 cols = 4
 rows = math.ceil(len(regions)/cols) if regions else 1
 fig, axes = plt.subplots(rows, cols, figsize=(4*cols, 3.2*rows), squeeze=False)
 
 for i, r in enumerate(regions):
     ax = axes[i//cols][i%cols]
-    vals = pivot.loc[pivot["ecephys_structure_acronym"] == r, "delta_rate_hz"].dropna().to_numpy()
-    if len(vals) == 0:
+
+    # gather per-stimulus delta-arrays for this region
+    deltas_by_stim = {}
+    for s in present_stims:
+        vals = pivot.loc[
+            (pivot["ecephys_structure_acronym"] == r) &
+            (pivot["stimulus_name"] == s),
+            "delta_rate_hz"
+        ].dropna().to_numpy()
+        if vals.size:
+            deltas_by_stim[s] = vals
+    if not deltas_by_stim:
         ax.set_title(f"{r} (no data)")
         ax.axis("off")
         continue
-    ax.hist(vals, bins=40)
-    ax.axvline(0, linestyle="--", linewidth=1)
+
+    # shared bins across stimuli within this region
+    all_vals = np.concatenate(list(deltas_by_stim.values()))
+    vmin, vmax = float(np.nanmin(all_vals)), float(np.nanmax(all_vals))
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
+        vmin, vmax = 0.0, max(1.0, vmax if np.isfinite(vmax) else 1.0)
+    bins = np.linspace(vmin, vmax, 41)
+
+    # overlay
+    for s, vals in deltas_by_stim.items():
+        ax.hist(vals, bins=bins, alpha=0.5, label=f"{s} (n={len(vals)})",
+                color=stim_color.get(s, None))
+    ax.axvline(0, linestyle="--", linewidth=1, color="gray")
     ax.set_title(f"{r} (n={len(vals)})")
-    ax.set_xlabel("delta rate (Hz)")
+    ax.set_xlabel("delta rate (Hz) [evoked - baseline]")
     ax.set_ylabel("count")
+    ax.legend(frameon=False, fontsize=8)
 # hide empty panels
-for k in range(i+1, rows*cols):
+last_i = len(regions) - 1
+for k in range(last_i + 1, rows*cols):
     axes[k//cols][k%cols].axis("off")
 
-fig.suptitle(f"delta firing rate (evoked - baseline) by region - session {session_id}", y=1.02)
+fig.suptitle(f"Delta firing rate by region (overlayed by stimulus) - session {session_id}", y=1.02)
 plt.tight_layout()
 out_path = plot_outdir / f"s{session_id}_delta_rate_by_region.png"
 plt.savefig(out_path, dpi=160, bbox_inches="tight")
 plt.close(fig)
-print(f"Saved plot: {out_path}")
+print(f"[plots] Saved delta histograms by stimulus: {out_path}")
 
-# -- B) baseline vs evoked per region (overlaid) --
-fig, axes = plt.subplots(rows, cols, figsize=(4*cols, 3.2*rows), squeeze=False)
+# -- A2) Grouped bar chart of median delta per region × stimulus (unit-weighted) --
+# unit-weighted per-unit summary for fair region ranking
+per_unit = (
+    pivot.groupby(["unit_id","ecephys_structure_acronym","stimulus_name"], as_index=False)
+         .agg(delta_rate_hz_mean=("delta_rate_hz","mean"),
+              n_trials=("delta_rate_hz","size"))
+)
+summ_unit = (
+    per_unit.groupby(["ecephys_structure_acronym", "stimulus_name"], as_index = False)
+        .agg(
+            n_units=('delta_rate_hz_mean', 'size'),
+            median_delta=('delta_rate_hz_mean', 'median'),
+            mean_delta=('delta_rate_hz_mean', 'mean'),
+            frac_pos=('delta_rate_hz_mean', lambda x: (x > 0).mean())
+        )
+)
 
-for i, r in enumerate(regions):
-    ax = axes[i//cols][i%cols]
-    sub = pivot[pivot["ecephys_structure_acronym"] == r]
-    b = sub["rate_hz_baseline"].dropna().to_numpy()
-    w = sub["rate_hz_evoked"].dropna().to_numpy()
-    if len(b) == 0 and len(w) == 0:
-        ax.set_title(f"{r} (no data)")
-        ax.axis("off")
-        continue
-    # overlay histograms; matplotlib will auto-pick colors
-    ax.hist(b, bins=40, alpha=0.5, label="baseline")
-    ax.hist(w, bins=40, alpha=0.5, label="evoked")
-    ax.set_title(f"{r} (n={len(sub)})")
-    ax.set_xlabel("rate (Hz)")
-    ax.set_ylabel("count")
-    ax.legend(frameon=False)
-for k in range(i+1, rows*cols):
-    axes[k//cols][k%cols].axis("off")
+if regions and present_stims:
+    plot_summ = summ_unit[summ_unit["ecephys_structure_acronym"].isin(regions)].copy()
+    # keep consistent stimulus order
+    plot_summ["stimulus_name"] = pd.Categorical(plot_summ["stimulus_name"],
+                                                categories=present_stims, ordered=True)
+    plot_summ = plot_summ.sort_values(["ecephys_structure_acronym","stimulus_name"])
 
-fig.suptitle("Baseline vs Evoked firing rate by region - session {session_id}", y=1.02)
-plt.tight_layout()
-out_path2 = plot_outdir / f"s{session_id}_baseline_vs_evoked_by_region.png"
-plt.savefig(out_path2, dpi=160, bbox_inches="tight")
-plt.close(fig)
-print(f"Saved plot: {out_path2}")
+    # bar positions
+    reg_list = [r for r in regions if r in plot_summ["ecephys_structure_acronym"].unique()]
+    x = np.arange(len(reg_list))
+    width = 0.25 if len(present_stims) == 3 else 0.35
+
+    fig, ax = plt.subplots(figsize=(max(8, 1.5*len(reg_list)), 4.5))
+    for j, s in enumerate(present_stims):
+        sub = plot_summ[plot_summ["stimulus_name"] == s]
+        # align to reg_list order; fill missing with 0 and mark n_units for labels
+        med_map = {k: v for k, v in zip(sub["ecephys_structure_acronym"], sub["median_delta"])}
+        n_map   = {k: v for k, v in zip(sub["ecephys_structure_acronym"], sub["n_units"])}
+        y = np.array([med_map.get(r, np.nan) for r in reg_list], dtype=float)
+        n = np.array([n_map.get(r, 0) for r in reg_list], dtype=int)
+        pos = x + (j - (len(present_stims)-1)/2.0) * width
+        ax.bar(pos, y, width=width, label=f"{s}", color=stim_color.get(s, None))
+        # annotate n_units above bars
+        for xp, yp, nn in zip(pos, y, n):
+            if np.isfinite(yp):
+                ax.text(xp, yp + (0.02 if yp >= 0 else -0.02), f"n={nn}", ha="center", va="bottom" if yp>=0 else "top", fontsize=8)
+
+    ax.axhline(0, color="gray", linestyle="--", linewidth=1)
+    ax.set_xticks(x)
+    ax.set_xticklabels(reg_list, rotation=30, ha="right")
+    ax.set_ylabel("median delta rate (Hz)\n(unit-weighted)")
+    ax.set_title(f"Region x Stimulus preference — session {session_id}")
+    ax.legend(frameon=False, ncol=len(present_stims))
+    plt.tight_layout()
+    out_path2 = plot_outdir / f"s{session_id}_median_delta_by_region_by_stim.png"
+    plt.savefig(out_path2, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[plots] Saved grouped bar chart (median unit delta): {out_path2}")
+
+# -- B) per-stimulus grids: baseline vs. evoked within regions --
+if regions and present_stims:
+    for stim_name in present_stims:
+        fig, axes = plt.subplots(rows, cols, figsize=(4*cols, 3.2*rows), squeeze=False)
+        for i, r in enumerate(regions):
+            ax = axes[i//cols][i%cols]
+            sub = pivot[(pivot["ecephys_structure_acronym"] == r) &
+                        (pivot["stimulus_name"] == stim_name)]
+            b = sub["rate_hz_baseline"].dropna().to_numpy()
+            w = sub["rate_hz_evoked"].dropna().to_numpy()
+            if len(b) == 0 and len(w) == 0:
+                ax.set_title(f"{r} (no data)")
+                ax.axis("off")
+                continue
+
+            # common bins so shapes are comparable
+            both = np.concatenate([b, w]) if b.size and w.size else (b if b.size else w)
+            vmin, vmax = float(np.nanmin(both)), float(np.nanmax(both))
+            if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
+                vmin, vmax = 0.0, max(1.0, vmax if np.isfinite(vmax) else 1.0)
+            bins = np.linspace(vmin, vmax, 41)
+        
+            ax.hist(b, bins=bins, alpha=0.5, label=f"baseline (n={len(b)})")
+            ax.hist(w, bins=bins, alpha=0.5, label=f"evoked (n={len(w)})")
+            ax.set_title(f"{r}")
+            ax.set_xlabel("rate (Hz)")
+            ax.set_ylabel("count")
+            ax.legend(frameon=False, fontsize=8)
+
+        #hide empty panels
+        last_i = len(regions) - 1
+        for k in range(last_i + 1, rows*cols):
+            axes[k//cols][k%cols].axis("off")
+
+        fig.suptitle(f"Baseline vs Evoked firing rate by region - {stim_name} - session {session_id}", y=1.02)
+        plt.tight_layout()
+        out_path_b = plot_outdir / f"s{session_id}_baseline_vs_evoked_by_region_{stim_name}.png"
+        plt.savefig(out_path_b, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[plots] Saved baseline-vs-evoked grid for {stim_name}: {out_path_b}")
 # =================================================================
 
-# -------- small text summary --------
-# --- Stimulus-aware trial-weighted summary (top 5 per stimulus) ---
+# -------- TEXT SUMMARIES --------
+# --- stimulus-aware trial-weighted summary (top 5 per stimulus) ---
 region_summary = (
     pivot.groupby([ "ecephys_structure_acronym", "stimulus_name"])
     .agg(mean_delta=("delta_rate_hz", "mean"),
@@ -465,12 +580,6 @@ top5_per_stim = region_summary.groupby("stimulus_name", group_keys=False).head(5
 print("\nTop regions per stimuli by mean delta rate (Hz):")
 print(top5_per_stim)
 
-# --- Unit-weighted summary (one vote per neuron per stimulus) ---
-per_unit = (
-    pivot.groupby(["unit_id","ecephys_structure_acronym","stimulus_name"], as_index=False)
-         .agg(delta_rate_hz_mean=("delta_rate_hz","mean"),
-              n_trials=("delta_rate_hz","size"))
-)
 region_stim_unitweighted = (
     per_unit.groupby(["ecephys_structure_acronym","stimulus_name"])
             .agg(n_units=("delta_rate_hz_mean","size"),
@@ -481,53 +590,6 @@ region_stim_unitweighted = (
             .sort_values(by=["stimulus_name","mean_delta"], ascending=[True,False])
 )
 print("\nUnit-weighted Region x Stimulus summary:")
-print(region_stim_unitweighted.head(20))
+print(region_stim_unitweighted.head(20).to_string(index=False))
 
 print("done")
-
-
-
-
-'''
-# ==== old B/W builder for reference ====
-
-stim = stim.reset_index(drop=True)
-stim["duration"] = stim["stop_time"] - stim["start_time"]
-
-# -------- Define evoked (W) and baseline (B) windows --------
-BASELINE_SEC = 0.25 # 500 ms baseline window
-EVOKED_SEC = 0.25   # 250 ms post-onset for transient response
-# evoked_sec picked smaller than shortest stimulus ######################################
-
-w_start = stim["start_time"].to_numpy()             # evoked start
-stim_end = stim["stop_time"].to_numpy()
-w_end = np.minimum(w_start + EVOKED_SEC, stim_end)  # evoked end
-
-# B = Baseline window
-## activity just before stimulus starts ("control period" neuron at rest)
-b_end = w_start
-b_start_exact = b_end - BASELINE_SEC
-
-min_spike_t = float(channel_unit_t_struct["spike_timestamp"].min())
-prev_w_end = np.r_[-np.inf, w_end[:-1]] # previous trial's evoked end
-# forces baseline start to be no earlier than prev stimulus end; prevent overlapping
-b_start = np.maximum(b_start_exact, np.maximum(min_spike_t, prev_w_end))
-
-# see the adjusted baselines
-#B = pd.DataFrame({"trial": stim.index, "stim": stim["stimulus_name"], "start": b_start, "end": b_end})
-#W = pd.DataFrame({"trial": stim.index, "stim": stim["stimulus_name"], "start": w_start, "end": w_end})
-
-# B/W windows: 2 rows per trial (baseline, evoked)
-## e.g.  drifting_gratings   baseline    8.0     10.0
-##       drifting_gratings   evoked      10.0    12.0
-windows = pd.DataFrame({
-    "trial": np.repeat(stim.index.values, 2),
-    "stimulus_name": np.repeat(stim["stimulus_name"].values, 2),
-    "phase": np.tile(["baseline", "evoked"], len(stim)),
-    "start": np.concatenate([b_start,   w_start]),
-    "end":   np.concatenate([b_end,     w_end]),
-})
-windows["duration"] = windows["end"] - windows["start"]
-# drop any zero/negative-duration windows
-windows = windows[windows["duration"] > 0].reset_index(drop=True)
-'''
