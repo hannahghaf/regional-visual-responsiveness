@@ -450,11 +450,13 @@ for i, r in enumerate(regions):
     # overlay
     for s, vals in deltas_by_stim.items():
         ax.hist(vals, bins=bins, alpha=0.5, label=f"{s} (n={len(vals)})",
-                color=stim_color.get(s, None))
+                color=stim_color.get(s, None),
+                density=True)
     ax.axvline(0, linestyle="--", linewidth=1, color="gray")
-    ax.set_title(f"{r} (n={len(vals)})")
+    #ax.set_title(f"{r} (n={len(vals)})")
+    ax.set_title(f"{r}  (units={pivot[pivot['ecephys_structure_acronym']==r]['unit_id'].nunique()})")
     ax.set_xlabel("delta rate (Hz) [evoked - baseline]")
-    ax.set_ylabel("count")
+    ax.set_ylabel("density")
     ax.legend(frameon=False, fontsize=8)
 # hide empty panels
 last_i = len(regions) - 1
