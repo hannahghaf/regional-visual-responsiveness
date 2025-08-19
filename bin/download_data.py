@@ -29,7 +29,7 @@ def process_session_csvs(session_id, cache, data_out):
     sess_path.mkdir(parents=True, exist_ok=True)
 
     # save spike times
-    spike_csv = Path(data_out) / "spike_times.csv"
+    spike_csv = sess_path / "spike_times.csv"
     with open(spike_csv, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(["unit", "t"])
