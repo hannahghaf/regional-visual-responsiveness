@@ -6,13 +6,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     gcc \
     build-essential \
+    time \
     && rm -rf /var/lib/apt/lists/*
 
 # install python packages
 RUN pip install --upgrade pip && \
-    pip install allensdk pandas
+    pip install allensdk numpy scipy pandas matplotlib seaborn
 
-WORKDIR /data
-COPY bin/ /bin/
-ENV DATA_DIR=/data
+WORKDIR /app
+COPY bin/ app/bin/
+RUN mkdir -p /app/data
+
+ENV MPLBACKEND=Agg
+ENV DATA_DIR=/app/data
 ENV PYTHONUNBUFFERED=1
